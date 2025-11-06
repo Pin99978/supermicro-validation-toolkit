@@ -11,11 +11,10 @@ Description=Supermicro Hardware Validation Service
 # CRITICAL: We must ensure this service runs *after* the
 # NVIDIA/AMD drivers are fully loaded. Otherwise, nvidia-smi
 # or rocm-smi will fail.
-After=network-online.target nvidia-persistenced.service
+After=network-online.target nvidia-persistenced.service sshd-keygen.service
 
 [Service]
-# 'oneshot' means it runs once and exits, which is
-# perfect for a validation script.
+# only run once for verify
 Type=oneshot
 
 # Path to the script deployed by the Diag Host.
@@ -27,6 +26,8 @@ ExecStart=/usr/local/bin/validate_gpu.py
 StandardOutput=journal+console
 StandardError=journal+console
 
+
+# defined the  unit install to the target 
 [Install]
 # This hook enables the service to start at the
 # standard multi-user boot level.

@@ -13,7 +13,7 @@ This document details the high-level architecture for deploying, managing, and e
 
 This architecture relies on standard, reliable Linux tools (`ssh`, `scp`, `git`) and strictly separates the **deployment** of configuration from the **execution** of validation. The validation script itself does not (and should not) know how to fetch its own configuration.
 
-### Workflow 1: Deploying Updates to the Fleet (1,000 Servers)
+### Workflow 1: Deploying Updates to the multiple servers
 
 This workflow is used to push a new version of the validator script or the `golden_config.yml` to all servers. It is run *from* the Diag Host. 
 
@@ -22,15 +22,15 @@ This workflow is used to push a new version of the validator script or the `gold
 # Master deployment script on the Diag Host
 # (deploy.sh)
 
-# assume there are 1000 servers in server_list.txt 
-SERVER_LIST="/path/to/server_list.txt" 
+# assume there are multiple servers in server_list.txt 
+SERVER_LIST="~/server_list.txt"  # you should defind the path in Diag Host
 
 # Paths to the master files on the Diag Host
 SCRIPT_SOURCE="./validate_gpu.py"
 CONFIG_SOURCE="./golden_config.yml"
 SERVICE_SOURCE="./docs/validation.service"
 
-echo "Beginning fleet-wide deployment..."
+echo "Beginning deployment..."
 
 while read -r server_ip; do
     echo "--- Deploying to $server_ip ---"
@@ -55,15 +55,13 @@ echo "Fleet deployment finished."
 
 ### Workflow 2: Change Control (How to safely update `golden_config.yml`)
 
-This is the most critical workflow, designed to prevent pushing unverified or incorrect configurations to the fleet.
-
 1.  **Isolate:** A new firmware (e.g., VBIOS `96.00.41.00.02`) is released by a vendor.
 2.  **Upgrade:** An engineer manually upgrades a single **"Golden Server"** (a dedicated, non-production test machine) to this new firmware.
 3.  **Extract:** The engineer runs `sudo python3 validate_gpu.py` on this Golden Server. The script will **[FAIL]**, but the output `validation_report.json` will contain the *actual* new version string:
     `"actual": "96.00.41.00.02"`
 4.  **Verify:** The engineer confirms this is the correct, expected new string.
 5.  **Commit:** The engineer updates `golden_config.yml` (on the Diag Host) with this *verified* string and commits it to **Git** with a clear message (e.g., "Update H100 VBIOS to 96.00.41.00.02 per NVIDIA Bulletin").
-6.  **Deploy:** The engineer can now safely run the `deploy.sh` script to push this new, verified config to the entire 1,000-server fleet.
+6.  **Deploy:** The engineer can now safely run the `deploy.sh` script to push this new, verified config to the entire multiple servers 
 
 ## 3. Architecture Flowchart
 
