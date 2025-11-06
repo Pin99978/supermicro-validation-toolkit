@@ -1,0 +1,33 @@
+# /etc/systemd/system/validation.service
+#
+# This service runs the Supermicro validation script on every boot
+# to ensure the system configuration matches the Golden Standard.
+#
+# Deployed via the Diag Host (deploy.sh)
+
+[Unit]
+Description=Supermicro Hardware Validation Service
+
+# CRITICAL: We must ensure this service runs *after* the
+# NVIDIA/AMD drivers are fully loaded. Otherwise, nvidia-smi
+# or rocm-smi will fail.
+After=network-online.target nvidia-persistenced.service
+
+[Service]
+# 'oneshot' means it runs once and exits, which is
+# perfect for a validation script.
+Type=oneshot
+
+# Path to the script deployed by the Diag Host.
+# Note: dmidecode requires root, so this runs as root.
+ExecStart=/usr/local/bin/validate_gpu.py
+
+# We want to see the [INFO] and [FAIL] logs in the
+# system journal for easy debugging.
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+# This hook enables the service to start at the
+# standard multi-user boot level.
+WantedBy=multi-user.target

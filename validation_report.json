@@ -1,0 +1,28 @@
+{
+  "report_id": "validation_report_2025-11-06T13:06:47.857102",
+  "status": "PASS",
+  "system_model": "RaiderGE6612UGS",
+  "checks_performed": [
+    {
+      "component": "GPU_Vendor",
+      "status": "PASS",
+      "expected": "nvidia",
+      "actual": "nvidia",
+      "notes": ""
+    },
+    {
+      "component": "GPU_0_Model",
+      "status": "PASS",
+      "expected": "NVIDIA GeForce RTX 3070 Ti Laptop GPU",
+      "actual": "NVIDIA GeForce RTX 3070 Ti Laptop GPU",
+      "notes": ""
+    },
+    {
+      "component": "GPU_0_VBIOS",
+      "status": "PASS",
+      "expected": "In list",
+      "actual": "94.04.7E.00.06",
+      "notes": ""
+    }
+  ]
+}

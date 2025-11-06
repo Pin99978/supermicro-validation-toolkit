@@ -1,0 +1,42 @@
+# ===============================================
+# Golden YAML for Pin-Yuan's Test PC
+# (Raider-GE66-12UGS)
+# ===============================================
+
+# test own 
+RaiderGE6612UGS:
+  
+  expected_gpu_vendor: "nvidia"
+  
+  # GPU specification
+  gpu_spec:
+    expected_model: "NVIDIA GeForce RTX 3070 Ti Laptop GPU"
+    expected_vbios_list:
+      - "94.04.7E.00.06"
+      - "94.04.7E.00.05" 
+
+
+# ==========================================================
+# Golden YAML - Supermicro AI Server Fleet
+# ==========================================================
+SYS-421GU-TNXR:
+  expected_gpu_vendor: "nvidia"
+  gpu_spec:
+    expected_model: "NVIDIA H100 80GB PCIe"
+    expected_vbios_list:
+      - "96.00.41.00.01"
+      - "96.00.40.00.05"
+
+AS-2124GQ-NART:
+  expected_gpu_vendor: "nvidia"
+  gpu_spec:
+    expected_model: "NVIDIA Tesla A100 40GB SXM4"
+    expected_vbios_list:
+      - "92.00.01.00.01"
+
+SYS-8125GS-TNHR:
+  expected_gpu_vendor: "amd"
+  gpu_spec:
+    expected_model: "AMD Instinct MI300X"
+    expected_vbios_list:
+      - "123.456.789.001"
