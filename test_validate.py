@@ -69,6 +69,14 @@ SYS-421GU-TNXR:
     expected_vbios_list:
       - "96.00.41.00.01"
       - "96.00.40.00.05"
+
+SYS-8125GS-TNHR:
+  expected_gpu_vendor: "amd"
+  gpu_spec:
+    expected_model: "AMD Instinct MI300X"
+    expected_vbios_list:
+      - "123.456.789.001"
+      - "123.456.789.000"
     """
     # 2. Create the file in the temporary directory
     config_file = tmp_path / "golden.yml"
@@ -103,6 +111,49 @@ def test_happy_path_nvidia_pass(mock_tools, setup_config_files):
     
     # Assert the exit code is 0
     assert e.value.code == 0
+
+def test_happy_path_amd_pass(monkeypatch, setup_config_files):
+    """
+    Test Case 5: Happy Path (AMD PASS)
+    - Mocks a server that *is* an AMD server (SYS-8125GS-TNHR).
+    - Mocks that 'rocm-smi' is found.
+    - Mocks that the model and VBIOS are correct.
+    - Expected Result: Script exits with code 0 (PASS)
+    """
+    print("\n--- TEST: test_happy_path_amd_pass ---")
+
+    # 1. Mock 'which' to find *only* rocm-smi
+    def mock_which_amd(tool_name):
+        if tool_name == "rocm-smi":
+            return "/usr/bin/rocm-smi"
+        return None
+    
+    monkeypatch.setattr(shutil, "which", mock_which_amd)
+
+    # 2. Mock 'run_command' to return AMD-specific values
+    def mock_run_command_amd(command):
+        if "dmidecode -s system-product-name" in command:
+            return "SYS-8125GS-TNHR" # <-- This is the key for the YAML
+        
+        if "rocm-smi --showproductname" in command:
+            # Return the correct model from the YAML
+            return "Card #0: AMD Instinct MI300X"
+        
+        if "rocm-smi --showvbios" in command:
+            # Return a VBIOS that is in the YAML's list
+            return "Card #0: VBIOS version: 123.456.789.001"
+        
+        return "" # Ignore other commands
+    
+    monkeypatch.setattr(validate_gpu, "run_command", mock_run_command_amd)
+
+    # We expect main() to call sys.exit(0)
+    with pytest.raises(SystemExit) as e:
+        validate_gpu.main()
+    
+    # Assert the exit code is 0
+    assert e.value.code == 0
+
 
 def test_fail_path_nvidia_wrong_vbios(monkeypatch, mock_tools, setup_config_files):
     """
@@ -176,3 +227,4 @@ def test_fail_path_config_not_found(monkeypatch):
         validate_gpu.main()
     
     assert e.value.code == 1
+

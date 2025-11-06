@@ -150,12 +150,96 @@ class NvidiaValidator(GpuValidator):
         return self.failures == 0
 
 class AmdValidator(GpuValidator):
-    """Concrete validation class for AMD GPUs using 'rocm-smi'."""
+    """
+    Concrete validation class for AMD GPUs using 'rocm-smi'.
+    All AMD-specific logic is encapsulated here.
+    """
     def validate(self):
         log_msg("--- Starting AMD GPU Validation (rocm-smi) ---")
-        log_msg("[INFO] AMD Validator is not implemented in this demo.")
-        add_check_to_report("AMD_Check", "SKIP", "N/A", "N/A", "Not Implemented")
-        return True # Placeholder
+        
+        # 1. Read expected values from YAML
+        try:
+            # Note: self.config is already the 'gpu_spec' section
+            expected_model = self.spec['expected_model']
+            expected_vbios_list = self.spec['expected_vbios_list']
+            log_msg(f"Golden YAML loaded. Verifying against:")
+            log_msg(f"  - Model: {expected_model}")
+            log_msg(f"  - VBIOS (any of): {', '.join(expected_vbios_list)}")
+        except KeyError as e:
+            log_msg(f"Missing key {e} in [gpu_spec][amd] section of YAML", is_error=True)
+            add_check_to_report("AMD_CONFIG", "FAIL", "Config to be present", "Missing keys", str(e))
+            self.failures += 1
+            return False
+
+        # 2. Get GPU Models
+        log_msg("Checking GPU Models...")
+        # Use the command you found: rocm-smi --showproductname
+        models_output = run_command("rocm-smi --showproductname")
+        if models_output is None: 
+            add_check_to_report("ROCM_SMI_MODEL", "FAIL", "Command to run", "Command failed")
+            self.failures += 1
+            return False
+
+        gpu_models = [line for line in models_output.split('\n') if line.strip()]
+        log_msg(f"Found {len(gpu_models)} AMD GPU(s).")
+        
+        if not gpu_models:
+             log_msg(f"  [FAIL] 'rocm-smi --showproductname' returned no GPUs.", is_error=True)
+             self.failures += 1
+             return False # Can't continue if no GPUs found
+
+        for i, line in enumerate(gpu_models):
+            # Output is like: "Card #0: AMD Instinct MI300X"
+            match = re.search(r'Card #\d+:\s+(.*)', line)
+            if match:
+                current_model = match.group(1).strip()
+                if current_model == expected_model:
+                    log_msg(f"  [PASS] GPU {i} Model: {current_model}")
+                    add_check_to_report(f"GPU_{i}_Model", "PASS", expected_model, current_model)
+                else:
+                    log_msg(f"  [FAIL] GPU {i} Model Mismatch. Expected: '{expected_model}', Found: '{current_model}'", is_error=True)
+                    add_check_to_report(f"GPU_{i}_Model", "FAIL", expected_model, current_model)
+                    self.failures += 1
+            else:
+                log_msg(f"  [FAIL] Could not parse model string for GPU {i}: {line}", is_error=True)
+                add_check_to_report(f"GPU_{i}_Model", "FAIL", expected_model, "Parse Error", line)
+                self.failures += 1
+
+        # 3. Get VBIOS Versions
+        log_msg("Checking GPU VBIOS Versions...")
+        # Use the command you found: rocm-smi --showvbios
+        vbios_output = run_command("rocm-smi --showvbios")
+        if vbios_output is None: 
+            add_check_to_report("ROCM_SMI_VBIOS", "FAIL", "Command to run", "Command failed")
+            self.failures += 1
+            return False
+        
+        vbios_versions = [line for line in vbios_output.split('\n') if line.strip()]
+        
+        if len(vbios_versions) != len(gpu_models):
+            log_msg(f"  [FAIL] VBIOS count ({len(vbios_versions)}) does not match GPU count ({len(gpu_models)}).", is_error=True)
+            self.failures += 1
+            return False
+
+        for i, line in enumerate(vbios_versions):
+            # Output is like: "Card #0: VBIOS version: 123.456.789.001"
+            match = re.search(r'VBIOS version:\s+(.*)', line)
+            if match:
+                current_vbios = match.group(1).strip()
+                if current_vbios in expected_vbios_list:
+                    log_msg(f"  [PASS] GPU {i} VBIOS: {current_vbios} (Matches list)")
+                    add_check_to_report(f"GPU_{i}_VBIOS", "PASS", "In list", current_vbios)
+                else:
+                    log_msg(f"  [FAIL] GPU {i} VBIOS Mismatch. Found: '{current_vbios}' (Not in expected list)", is_error=True)
+                    add_check_to_report(f"GPU_{i}_VBIOS", "FAIL", f"One of {expected_vbios_list}", current_vbios)
+                    self.failures += 1
+            else:
+                log_msg(f"  [FAIL] Could not parse VBIOS string for GPU {i}: {line}", is_error=True)
+                add_check_to_report(f"GPU_{i}_VBIOS", "FAIL", "N/A", "Parse Error", line)
+                self.failures += 1
+                
+        log_msg("--- AMD GPU Validation Finished ---")
+        return self.failures == 0
 
 class IntelValidator(GpuValidator):
     """Placeholder class for Intel GPU validation."""
