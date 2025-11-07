@@ -82,3 +82,32 @@ graph TD
     
     J[Central Log Collector (Splunk/ELK)] -- "10. Collects Report" --> S_JSON
 ```
+## 4. Testing Strategy
+
+To ensure the reliability of the validation script in a production environment, a multi-layered testing strategy is employed. This ensures that the script's logic is correct, that it integrates properly with real hardware and tools, and that it works within the larger production workflow.
+
+### Layer 1: Unit Tests (`test_validate.py`)
+
+-   **Purpose:** To test the internal logic of the `validate_gpu.py` script in isolation from the real environment.
+-   **Implementation:** These tests use `pytest` and `monkeypatch` to mock all external dependencies, including command-line tools (`nvidia-smi`, `rocm-smi`, `dmidecode`) and file system interactions.
+-   **Assertions:** The unit tests verify:
+    -   The script's exit code (0 for PASS, 1 for FAIL).
+    -   The content of the generated `validation_report.json` to ensure it accurately reflects the test scenario (e.g., correct failure reason).
+-   **Execution:** These tests are fast and can be run on any development machine without requiring specific hardware.
+
+### Layer 2: Integration Tests (`test_integration.py`)
+
+-   **Purpose:** To verify that the script correctly interacts with the real command-line tools and hardware on a properly configured test machine.
+-   **Implementation:** These tests run the `validate_gpu.py` script on a real system. They do *not* mock the `nvidia-smi` or `rocm-smi` commands. They use `pytest.mark.skipif` to automatically skip tests if the required hardware or tools are not present.
+-   **Assertions:** The integration tests primarily verify the script's exit code on a known-good test machine.
+-   **Execution:** These tests are intended to be run on dedicated test machines that match the hardware configurations of the production fleet.
+
+### Layer 3: End-to-End (E2E) Tests
+
+-   **Purpose:** To test the entire production workflow, from configuration deployment to report collection.
+-   **Implementation:** E2E tests are managed by a higher-level test harness. This harness would:
+    1.  Deploy a specific version of the `golden_config.yml` to a test server.
+    2.  Trigger the `validate_gpu.py` script (e.g., by rebooting the server to activate the `systemd` service).
+    3.  Retrieve the `validation_report.json` from the server.
+    4.  Assert the content of the report against the expected outcome.
+-   **Execution:** E2E tests are the most comprehensive and are typically run as part of a full system validation or release process.

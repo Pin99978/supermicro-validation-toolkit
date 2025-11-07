@@ -1,6 +1,7 @@
 import pytest
 import shutil
 import validate_gpu # Import the main script we are testing
+import importlib
 
 # -----------------------------------------------------------------------------
 # Pytest Fixture: 'monkeypatch'
@@ -10,6 +11,16 @@ import validate_gpu # Import the main script we are testing
 # 'tmp_path' is a built-in pytest tool that creates a temporary directory
 # for each test run, so we don't clutter our file system.
 # -----------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def clean_module(monkeypatch):
+    """
+    This fixture automatically runs for every test. It reloads the 
+    `validate_gpu` module to ensure that the global `report_data` dictionary
+    is reset to its initial state before each test run. This prevents
+    state from leaking between tests.
+    """
+    importlib.reload(validate_gpu)
 
 @pytest.fixture
 def mock_tools(monkeypatch):
@@ -37,7 +48,7 @@ def mock_tools(monkeypatch):
             return "Card #0: AMD Instinct MI300X"
 
         # If a command isn't handled by our mock, log it
-        log_msg(f"[MOCK] Unhandled command: {command}", is_error=True)
+        validate_gpu.log_msg(f"[MOCK] Unhandled command: {command}", is_error=True)
         return ""
 
     # Create a mock 'which' function
@@ -101,7 +112,7 @@ def test_happy_path_nvidia_pass(mock_tools, setup_config_files):
     - 'nvidia-smi' is found
     - GPU model is correct (H100)
     - VBIOS version is correct (in the list)
-    - Expected Result: Script exits with code 0 (PASS)
+    - Expected Result: Script exits with code 0 (PASS) and report is correct
     """
     print("\n--- TEST: test_happy_path_nvidia_pass ---")
     
@@ -111,6 +122,24 @@ def test_happy_path_nvidia_pass(mock_tools, setup_config_files):
     
     # Assert the exit code is 0
     assert e.value.code == 0
+
+    # Assert the report content
+    import json
+    report_path = validate_gpu.JSON_REPORT_PATH
+    with open(report_path, 'r') as f:
+        report = json.load(f)
+
+    assert report["status"] == "PASS"
+    assert report["system_model"] == "SYS-421GU-TNXR"
+    
+    # Ensure all checks passed
+    for check in report["checks_performed"]:
+        assert check["status"] == "PASS"
+
+    # Check the GPU model check specifically
+    gpu_model_check = report["checks_performed"][1]
+    assert gpu_model_check["component"] == "GPU_0_Model"
+    assert gpu_model_check["expected"] == "NVIDIA H100 80GB PCIe"
 
 def test_happy_path_amd_pass(monkeypatch, setup_config_files):
     """
@@ -155,28 +184,33 @@ def test_happy_path_amd_pass(monkeypatch, setup_config_files):
     assert e.value.code == 0
 
 
-def test_fail_path_nvidia_wrong_vbios(monkeypatch, mock_tools, setup_config_files):
+def test_fail_path_nvidia_wrong_vbios(monkeypatch, setup_config_files):
     """
     Test Case 2: Failure Path (NVIDIA Wrong VBIOS)
     - System model is correct (SYS-421GU-TNXR)
     - 'nvidia-smi' is found
     - GPU model is correct (H100)
     - VBIOS version is *incorrect*
-    - Expected Result: Script exits with code 1 (FAIL)
+    - Expected Result: Script exits with code 1 (FAIL) and report shows VBIOS mismatch
     """
     print("\n--- TEST: test_fail_path_nvidia_wrong_vbios ---")
 
-    # *** Override the mock_tools VBIOS return value ***
+    # 1. Mock 'which' to find nvidia-smi
+    def mock_which(tool_name):
+        if tool_name == "nvidia-smi":
+            return "/usr/bin/nvidia-smi"
+        return None
+    monkeypatch.setattr(shutil, "which", mock_which)
+
+    # 2. Mock 'run_command' to return the wrong VBIOS
     def mock_run_command_wrong_vbios(command):
         if "dmidecode -s system-product-name" in command:
             return "SYS-421GU-TNXR"
         if "nvidia-smi -L" in command:
             return "GPU 0: NVIDIA H100 80GB PCIe (UUID: ...)"
         if "nvidia-smi -q | grep 'VBIOS Version'" in command:
-            # This is our injected *wrong* data
             return "    VBIOS Version                       : 99.99.99.99.99"
         return ""
-    
     monkeypatch.setattr(validate_gpu, "run_command", mock_run_command_wrong_vbios)
 
     # We expect main() to call sys.exit(1)
@@ -185,6 +219,18 @@ def test_fail_path_nvidia_wrong_vbios(monkeypatch, mock_tools, setup_config_file
     
     # Assert the exit code is 1
     assert e.value.code == 1
+
+    # Assert the report content
+    import json
+    report_path = validate_gpu.JSON_REPORT_PATH
+    with open(report_path, 'r') as f:
+        report = json.load(f)
+
+    assert report["status"] == "FAIL"
+    vbios_check = next((c for c in report["checks_performed"] if c["component"] == "GPU_0_VBIOS"), None)
+    assert vbios_check is not None
+    assert vbios_check["status"] == "FAIL"
+    assert vbios_check["actual"] == "99.99.99.99.99"
 
 def test_fail_path_bom_mismatch(monkeypatch, mock_tools, setup_config_files):
     """

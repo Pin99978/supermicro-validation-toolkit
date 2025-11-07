@@ -1,5 +1,5 @@
 {
-  "report_id": "validation_report_2025-11-06T15:25:55.765899",
+  "report_id": "validation_report_2025-11-07T13:45:22.364779",
   "status": "PASS",
   "system_model": "RaiderGE6612UGS",
   "checks_performed": [
@@ -20,7 +20,10 @@
     {
       "component": "GPU_0_VBIOS",
       "status": "PASS",
-      "expected": "In list",
+      "expected": [
+        "94.04.7E.00.06",
+        "94.04.7E.00.05"
+      ],
       "actual": "94.04.7E.00.06",
       "notes": ""
     }

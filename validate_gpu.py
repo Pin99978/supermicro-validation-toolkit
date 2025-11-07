@@ -83,171 +83,163 @@ class GpuValidator(ABC):
     def __init__(self, gpu_spec):
         self.spec = gpu_spec
         self.failures = 0
+        self.vendor_name = "Unknown" # Should be overridden by child
+
+    def validate(self):
+        """Generic validation flow."""
+        log_msg(f"--- Starting {self.vendor_name} GPU Validation ---")
+        
+        try:
+            expected_model = self.spec['expected_model']
+            expected_vbios_list = self.spec['expected_vbios_list']
+            log_msg(f"Golden YAML loaded. Verifying against:")
+            log_msg(f"  - Model: {expected_model}")
+            log_msg(f"  - VBIOS (any of): {', '.join(expected_vbios_list)}")
+        except KeyError as e:
+            log_msg(f"Missing key {e} in [gpu_spec][{self.vendor_name.lower()}] section of YAML", is_error=True)
+            add_check_to_report(f"{self.vendor_name.upper()}_CONFIG", "FAIL", "Config to be present", "Missing keys", str(e))
+            self.failures += 1
+            return False
+
+        # --- Model and VBIOS Checks ---
+        self._check_models(expected_model)
+        self._check_vbios(expected_vbios_list)
+
+        log_msg(f"--- {self.vendor_name} GPU Validation Finished ---")
+        return self.failures == 0
+
+    def _validate_list_of_items(self, items, check_name, expected_value, parser_regex, is_vbios=False):
+        """Generic helper to validate a list of strings against an expected value."""
+        if not items:
+            log_msg(f"  [FAIL] Command returned no items for {check_name}.", is_error=True)
+            self.failures += 1
+            return
+
+        for i, line in enumerate(items):
+            match = re.search(parser_regex, line)
+            if match:
+                current_value = match.group(1).strip()
+                is_match = False
+                if is_vbios:
+                    is_match = current_value in expected_value
+                else:
+                    is_match = current_value == expected_value
+
+                if is_match:
+                    log_msg(f"  [PASS] GPU {i} {check_name}: {current_value}")
+                    add_check_to_report(f"GPU_{i}_{check_name}", "PASS", expected_value, current_value)
+                else:
+                    log_msg(f"  [FAIL] GPU {i} {check_name} Mismatch. Expected: '{expected_value}', Found: '{current_value}'", is_error=True)
+                    add_check_to_report(f"GPU_{i}_{check_name}", "FAIL", expected_value, current_value)
+                    self.failures += 1
+            else:
+                log_msg(f"  [FAIL] Could not parse {check_name} string for GPU {i}: {line}", is_error=True)
+                add_check_to_report(f"GPU_{i}_{check_name}", "FAIL", expected_value, "Parse Error", line)
+                self.failures += 1
 
     @abstractmethod
-    def validate(self):
-        """Returns True if validation passes, False otherwise."""
+    def _check_models(self, expected_model):
+        pass
+
+    @abstractmethod
+    def _check_vbios(self, expected_vbios_list):
         pass
 
 # --- Concrete Validator Classes ---
 
 class NvidiaValidator(GpuValidator):
     """Concrete validation class for NVIDIA GPUs using 'nvidia-smi'."""
-    def validate(self):
-        log_msg("--- Starting NVIDIA GPU Validation (nvidia-smi) ---")
-        try:
-            expected_model = self.spec['expected_model']
-            expected_vbios_list = self.spec['expected_vbios_list']
-            log_msg(f"Golden YAML loaded. Verifying against:")
-            log_msg(f"  - Model: {expected_model}")
-            log_msg(f"  - VBIOS (any of): {', '.join(expected_vbios_list)}")
-        except KeyError as e:
-            log_msg(f"Missing key {e} in [gpu_spec][nvidia] section of YAML", is_error=True)
-            add_check_to_report("NVIDIA_CONFIG", "FAIL", "Config to be present", "Missing keys", str(e))
-            self.failures += 1
-            return False
+    def __init__(self, gpu_spec):
+        super().__init__(gpu_spec)
+        self.vendor_name = "NVIDIA"
 
-        # --- Check Models ---
+    def _check_models(self, expected_model):
         log_msg("Checking GPU Models...")
         models_output = run_command("nvidia-smi -L")
-        if models_output is None: self.failures += 1; return False
-        
-        gpu_models = models_output.split('\n')
-        log_msg(f"Found {len(gpu_models)} NVIDIA GPU(s).")
-        for i, line in enumerate(gpu_models):
-            match = re.search(r'GPU \d+: (.*?) \(UUID:', line)
-            if match:
-                current_model = match.group(1).strip()
-                if current_model == expected_model:
-                    log_msg(f"  [PASS] GPU {i} Model: {current_model}")
-                    add_check_to_report(f"GPU_{i}_Model", "PASS", expected_model, current_model)
-                else:
-                    log_msg(f"  [FAIL] GPU {i} Model Mismatch. Expected: '{expected_model}', Found: '{current_model}'", is_error=True)
-                    add_check_to_report(f"GPU_{i}_Model", "FAIL", expected_model, current_model)
-                    self.failures += 1
-            else:
-                log_msg(f"  [FAIL] Could not parse model string for GPU {i}: {line}", is_error=True)
-                add_check_to_report(f"GPU_{i}_Model", "FAIL", expected_model, "Parse Error", line)
-                self.failures += 1
+        if models_output is None: self.failures += 1; return
+        self._validate_list_of_items(
+            models_output.split('\n'), 
+            "Model", 
+            expected_model, 
+            r'GPU \d+: (.*?) \(UUID:'
+        )
 
-        # --- Check VBIOS ---
+    def _check_vbios(self, expected_vbios_list):
         log_msg("Checking GPU VBIOS Versions...")
         vbios_output = run_command("nvidia-smi -q | grep 'VBIOS Version'")
-        if vbios_output is None: self.failures += 1; return False
-
-        vbios_versions = vbios_output.split('\n')
-        for i, line in enumerate(vbios_versions):
-            current_vbios = line.split(':')[-1].strip()
-            if current_vbios in expected_vbios_list:
-                log_msg(f"  [PASS] GPU {i} VBIOS: {current_vbios} (Matches list)")
-                add_check_to_report(f"GPU_{i}_VBIOS", "PASS", "In list", current_vbios)
-            else:
-                log_msg(f"  [FAIL] GPU {i} VBIOS Mismatch. Found: '{current_vbios}' (Not in expected list)", is_error=True)
-                add_check_to_report(f"GPU_{i}_VBIOS", "FAIL", f"One of {expected_vbios_list}", current_vbios)
-                self.failures += 1
-                
-        log_msg("--- NVIDIA GPU Validation Finished ---")
-        return self.failures == 0
+        if vbios_output is None: self.failures += 1; return
+        self._validate_list_of_items(
+            vbios_output.split('\n'), 
+            "VBIOS", 
+            expected_vbios_list, 
+            r':\s+(.*)', 
+            is_vbios=True
+        )
 
 class AmdValidator(GpuValidator):
     """
     Concrete validation class for AMD GPUs using 'rocm-smi'.
     All AMD-specific logic is encapsulated here.
     """
-    def validate(self):
-        log_msg("--- Starting AMD GPU Validation (rocm-smi) ---")
-        
-        # 1. Read expected values from YAML
-        try:
-            # Note: self.config is already the 'gpu_spec' section
-            expected_model = self.spec['expected_model']
-            expected_vbios_list = self.spec['expected_vbios_list']
-            log_msg(f"Golden YAML loaded. Verifying against:")
-            log_msg(f"  - Model: {expected_model}")
-            log_msg(f"  - VBIOS (any of): {', '.join(expected_vbios_list)}")
-        except KeyError as e:
-            log_msg(f"Missing key {e} in [gpu_spec][amd] section of YAML", is_error=True)
-            add_check_to_report("AMD_CONFIG", "FAIL", "Config to be present", "Missing keys", str(e))
-            self.failures += 1
-            return False
+    def __init__(self, gpu_spec):
+        super().__init__(gpu_spec)
+        self.vendor_name = "AMD"
+        self.gpu_count = 0
 
-        # 2. Get GPU Models
+    def _check_models(self, expected_model):
         log_msg("Checking GPU Models...")
-        # Use the command you found: rocm-smi --showproductname
         models_output = run_command("rocm-smi --showproductname")
         if models_output is None: 
             add_check_to_report("ROCM_SMI_MODEL", "FAIL", "Command to run", "Command failed")
             self.failures += 1
-            return False
-
-        gpu_models = [line for line in models_output.split('\n') if line.strip()]
-        log_msg(f"Found {len(gpu_models)} AMD GPU(s).")
+            return
         
-        if not gpu_models:
-             log_msg(f"  [FAIL] 'rocm-smi --showproductname' returned no GPUs.", is_error=True)
-             self.failures += 1
-             return False # Can't continue if no GPUs found
+        gpu_models = [line for line in models_output.split('\n') if line.strip()]
+        self.gpu_count = len(gpu_models)
+        log_msg(f"Found {self.gpu_count} AMD GPU(s).")
 
-        for i, line in enumerate(gpu_models):
-            # Output is like: "Card #0: AMD Instinct MI300X"
-            match = re.search(r'Card #\d+:\s+(.*)', line)
-            if match:
-                current_model = match.group(1).strip()
-                if current_model == expected_model:
-                    log_msg(f"  [PASS] GPU {i} Model: {current_model}")
-                    add_check_to_report(f"GPU_{i}_Model", "PASS", expected_model, current_model)
-                else:
-                    log_msg(f"  [FAIL] GPU {i} Model Mismatch. Expected: '{expected_model}', Found: '{current_model}'", is_error=True)
-                    add_check_to_report(f"GPU_{i}_Model", "FAIL", expected_model, current_model)
-                    self.failures += 1
-            else:
-                log_msg(f"  [FAIL] Could not parse model string for GPU {i}: {line}", is_error=True)
-                add_check_to_report(f"GPU_{i}_Model", "FAIL", expected_model, "Parse Error", line)
-                self.failures += 1
+        self._validate_list_of_items(
+            gpu_models, 
+            "Model", 
+            expected_model, 
+            r'Card #\d+:\s+(.*)'
+        )
 
-        # 3. Get VBIOS Versions
+    def _check_vbios(self, expected_vbios_list):
         log_msg("Checking GPU VBIOS Versions...")
-        # Use the command you found: rocm-smi --showvbios
         vbios_output = run_command("rocm-smi --showvbios")
         if vbios_output is None: 
             add_check_to_report("ROCM_SMI_VBIOS", "FAIL", "Command to run", "Command failed")
             self.failures += 1
-            return False
+            return
         
         vbios_versions = [line for line in vbios_output.split('\n') if line.strip()]
         
-        if len(vbios_versions) != len(gpu_models):
-            log_msg(f"  [FAIL] VBIOS count ({len(vbios_versions)}) does not match GPU count ({len(gpu_models)}).", is_error=True)
+        if len(vbios_versions) != self.gpu_count:
+            log_msg(f"  [FAIL] VBIOS count ({len(vbios_versions)}) does not match GPU count ({self.gpu_count}).", is_error=True)
             self.failures += 1
-            return False
+            return
 
-        for i, line in enumerate(vbios_versions):
-            # Output is like: "Card #0: VBIOS version: 123.456.789.001"
-            match = re.search(r'VBIOS version:\s+(.*)', line)
-            if match:
-                current_vbios = match.group(1).strip()
-                if current_vbios in expected_vbios_list:
-                    log_msg(f"  [PASS] GPU {i} VBIOS: {current_vbios} (Matches list)")
-                    add_check_to_report(f"GPU_{i}_VBIOS", "PASS", "In list", current_vbios)
-                else:
-                    log_msg(f"  [FAIL] GPU {i} VBIOS Mismatch. Found: '{current_vbios}' (Not in expected list)", is_error=True)
-                    add_check_to_report(f"GPU_{i}_VBIOS", "FAIL", f"One of {expected_vbios_list}", current_vbios)
-                    self.failures += 1
-            else:
-                log_msg(f"  [FAIL] Could not parse VBIOS string for GPU {i}: {line}", is_error=True)
-                add_check_to_report(f"GPU_{i}_VBIOS", "FAIL", "N/A", "Parse Error", line)
-                self.failures += 1
-                
-        log_msg("--- AMD GPU Validation Finished ---")
-        return self.failures == 0
+        self._validate_list_of_items(
+            vbios_versions, 
+            "VBIOS", 
+            expected_vbios_list, 
+            r'VBIOS version:\s+(.*)', 
+            is_vbios=True
+        )
 
 class IntelValidator(GpuValidator):
     """Placeholder class for Intel GPU validation."""
-    def validate(self):
-        log_msg("--- Starting Intel GPU Validation (level-zero-ctl) ---")
-        log_msg("[INFO] Intel Validator is not implemented in this demo.")
+    def __init__(self, gpu_spec):
+        super().__init__(gpu_spec)
+        self.vendor_name = "Intel"
+
+    def _check_models(self, expected_model):
+        log_msg("[INFO] Intel Validator (_check_models) is not implemented in this demo.")
         add_check_to_report("Intel_Check", "SKIP", "N/A", "N/A", "Not Implemented")
-        return True # Placeholder
+
+    def _check_vbios(self, expected_vbios_list):
+        log_msg("[INFO] Intel Validator (_check_vbios) is not implemented in this demo.")
 
 # --- Factory Function ---
 
@@ -265,56 +257,51 @@ def get_validator(expected_vendor, gpu_spec):
 
 # --- Main Execution ---
 
-def main():
-    global failures
-    failures = 0
-    
-    # --- 1. Get current system model number ---
+def get_system_model():
+    """Gets the system model name."""
     log_msg("--- [Phase 1: BOM Validation] ---")
     current_model = run_command("dmidecode -s system-product-name | tr -d ' '")
-    
-    # UPDATED CHECK: Handle both None (command failure) and empty string (permission issue)
     if not current_model:
         log_msg("Cannot read system model name (dmidecode failed or returned empty).", is_error=True)
         log_msg("--> Did you forget to run with 'sudo'?", is_error=True)
         add_check_to_report("System_Model", "FAIL", "Any Model", "Read Error")
-        sys.exit(1)
-    
+        return None
     log_msg(f"Detected system model: {current_model}")
     report_data["system_model"] = current_model
+    return current_model
 
-    # --- 2. Load Golden YAML ---
+def load_config(file_path):
+    """Loads the YAML configuration file."""
     try:
-        with open(CONFIG_FILE_PATH, 'r') as f:
+        with open(file_path, 'r') as f:
             config = yaml.safe_load(f)
+        if config is None:
+            log_msg(f"Golden YAML file is empty or malformed: {file_path}", is_error=True)
+            add_check_to_report("YAML_Parse", "FAIL", "Valid YAML data", "File is empty or invalid")
+            return None
+        return config
     except Exception as e:
         log_msg(f"Failed to load Golden YAML: {e}", is_error=True)
-        add_check_to_report("YAML_Load", "FAIL", CONFIG_FILE_PATH, "Load Error", str(e))
-        sys.exit(1)
+        add_check_to_report("YAML_Load", "FAIL", file_path, "Load Error", str(e))
+        return None
 
-    # --- 3. Find spec for current model ---
-    
-    # *** NEW BUG FIX: Check if config is None (e.g., empty file) ***
-    if config is None:
-        log_msg(f"Golden YAML file is empty or malformed: {CONFIG_FILE_PATH}", is_error=True)
-        add_check_to_report("YAML_Parse", "FAIL", "Valid YAML data", "File is empty or invalid")
-        sys.exit(1)
-        
+def run_validation(current_model, config):
+    """Runs the main validation logic."""
+    failures = 0
     if current_model not in config:
         log_msg(f"System model '{current_model}' is not defined in {CONFIG_FILE_PATH}", is_error=True)
         add_check_to_report("YAML_Spec", "FAIL", f"Spec for {current_model}", "Not Found")
-        sys.exit(1)
-        
+        return 1
+
     model_spec = config[current_model]
     log_msg(f"Successfully loaded spec for '{current_model}'")
 
-    # --- 4. Verify expected GPU vendor ---
     log_msg("--- [Phase 2: GPU Validation] ---")
     expected_vendor = model_spec.get('expected_gpu_vendor')
     if not expected_vendor:
         log_msg(f"'expected_gpu_vendor' not defined for '{current_model}' in YAML.", is_error=True)
         add_check_to_report("GPU_Vendor", "FAIL", "Vendor Spec", "Not Defined in YAML")
-        sys.exit(1)
+        return 1
 
     log_msg(f"BOM requires GPU vendor: {expected_vendor}")
 
@@ -331,7 +318,6 @@ def main():
         log_msg(f"[PASS] GPU vendor validated (found {tool_found} tool).")
         add_check_to_report("GPU_Vendor", "PASS", expected_vendor, tool_found)
         
-        # --- 5. Perform Detailed Component Validation ---
         gpu_spec = model_spec.get('gpu_spec')
         if not gpu_spec:
             log_msg(f"'gpu_spec' not defined for '{current_model}' in YAML.", is_error=True)
@@ -341,8 +327,10 @@ def main():
             validator = get_validator(expected_vendor, gpu_spec)
             if validator and not validator.validate():
                 failures += validator.failures
+    return failures
 
-    # --- 6. Final Report Generation ---
+def write_report(failures):
+    """Writes the JSON report file."""
     if failures == 0:
         log_msg("All checks passed.")
         report_data["status"] = "PASS"
@@ -350,14 +338,12 @@ def main():
         log_msg(f"{failures} failure(s) detected.")
         report_data["status"] = "FAIL"
 
-    # Write the JSON report file
     try:
         with open(JSON_REPORT_PATH, 'w') as f:
             json.dump(report_data, f, indent=2)
         log_msg(f"Successfully wrote JSON report to {JSON_REPORT_PATH}")
     except PermissionError:
         log_msg(f"Permission denied writing to {JSON_REPORT_PATH}. Try running as root.", is_error=True)
-        # Also try writing to local directory as a fallback
         local_report_path = "./validation_report.json"
         try:
             with open(local_report_path, 'w') as f:
@@ -365,22 +351,36 @@ def main():
             log_msg(f"Wrote fallback report to {local_report_path}")
         except Exception as e:
             log_msg(f"Failed to write fallback report: {e}", is_error=True)
-            
     except Exception as e:
         log_msg(f"Failed to write JSON report: {e}", is_error=True)
 
-    # --- 7. Final Exit ---
+def print_final_result(failures, system_model):
+    """Prints the final result to the console."""
     print("\n" + "="*30)
     if failures == 0:
         print(f"  FINAL RESULT: [PASS]")
-        print(f"  System '{current_model}' fully matches the Golden YAML standard.")
+        print(f"  System '{system_model}' fully matches the Golden YAML standard.")
         print("="*30)
         sys.exit(0)
     else:
         print(f"  FINAL RESULT: [FAIL] ({failures} failure(s) detected)")
-        print(f"  System '{current_model}' does NOT match the Golden YAML standard.")
+        print(f"  System '{system_model}' does NOT match the Golden YAML standard.")
         print("="*30)
         sys.exit(1)
+
+def main():
+    """Main function to run the validation script."""
+    system_model = get_system_model()
+    if not system_model:
+        sys.exit(1)
+
+    config = load_config(CONFIG_FILE_PATH)
+    if not config:
+        sys.exit(1)
+
+    failures = run_validation(system_model, config)
+    write_report(failures)
+    print_final_result(failures, system_model)
 
 if __name__ == "__main__":
     main()
