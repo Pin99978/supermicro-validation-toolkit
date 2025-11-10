@@ -305,18 +305,28 @@ def run_validation(current_model, config):
 
     log_msg(f"BOM requires GPU vendor: {expected_vendor}")
 
-    tool_found = None
-    if shutil.which("nvidia-smi"): tool_found = "nvidia"
-    elif shutil.which("rocm-smi"): tool_found = "amd"
-    elif shutil.which("level-zero-ctl"): tool_found = "intel"
+    # Map of vendor names to their corresponding command-line tool
+    vendor_tools = {
+        "nvidia": "nvidia-smi",
+        "amd": "rocm-smi",
+        "intel": "level-zero-ctl"
+    }
 
-    if tool_found != expected_vendor:
-        log_msg(f"BOM validation FAILED! Expected vendor '{expected_vendor}', but found '{tool_found}' tool (or tool not found).", is_error=True)
-        add_check_to_report("GPU_Vendor", "FAIL", expected_vendor, str(tool_found))
+    # Check if the expected vendor is supported
+    expected_tool = vendor_tools.get(expected_vendor)
+    if not expected_tool:
+        log_msg(f"Vendor '{expected_vendor}' is not a supported vendor in this script.", is_error=True)
+        add_check_to_report("GPU_Vendor", "FAIL", expected_vendor, "Unsupported Vendor")
+        return 1 # Early exit if vendor is unknown
+
+    # Check if the specific tool for the expected vendor exists
+    if not shutil.which(expected_tool):
+        log_msg(f"BOM validation FAILED! Expected vendor '{expected_vendor}' but its tool ('{expected_tool}') was not found.", is_error=True)
+        add_check_to_report("GPU_Vendor", "FAIL", f"Tool '{expected_tool}' to be present", "Not Found")
         failures += 1
     else:
-        log_msg(f"[PASS] GPU vendor validated (found {tool_found} tool).")
-        add_check_to_report("GPU_Vendor", "PASS", expected_vendor, tool_found)
+        log_msg(f"[PASS] GPU vendor validated (found {expected_tool} tool).")
+        add_check_to_report("GPU_Vendor", "PASS", expected_vendor, expected_tool)
         
         gpu_spec = model_spec.get('gpu_spec')
         if not gpu_spec:
